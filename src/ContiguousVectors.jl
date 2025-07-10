@@ -28,12 +28,21 @@ Base.@propagate_inbounds function Base.getindex(v::ContiguousVector{T}, i) where
     @boundscheck checkbounds(v.v, i)
     return unsafe_load(reinterpret(Ptr{isbitstype(T) ? T : Any}, pointer(v.v)), i)
 end
+Base.@propagate_inbounds function Base.getindex(v::ContiguousVector, range::AbstractRange)
+    @boundscheck checkbounds(v.v, range)
+    out = ContiguousVector{eltype(v)}()
+    unsafe_resize!(out, length(range))
+    for (i, j) in enumerate(range)
+        @inbounds out[i] = v[j]
+    end
+    return out
+end
 Base.@propagate_inbounds function Base.setindex!(v::ContiguousVector, val, i)
     return setindex!(v.v, val, i)
 end
 function Base.resize!(v::ContiguousVector, n::Integer, default)
     old_size = length(v)
-    resize!(v.v, n)
+    unsafe_resize!(v, n)
     if n > old_size
         for i in old_size+1:n
             @inbounds v.v[i] = default
@@ -41,30 +50,33 @@ function Base.resize!(v::ContiguousVector, n::Integer, default)
     end
     v
 end
+unsafe_resize!(v::ContiguousVector, n::Integer) = resize!(v.v, n)
 function Base.iterate(v::ContiguousVector, i = 1)
     if i > length(v)
         return nothing
     end
     return (@inbounds(v[i]), i + 1)
 end
+function Base.append!(v::ContiguousVector, collection)
+    if Base.IteratorSize(collection) isa Base.SizeUnknown
+        for x in collection
+            push!(v.v, x)
+        end
+    else
+        old_size = length(v)
+        resize!(v.v, old_size + length(collection))
+        for (i,x) in enumerate(collection)
+            @inbounds v[old_size + i] = x
+        end
+    end
+    return v
+end
 
 # ---- Helper constructors ----
 
 function ContiguousVector{T}(collection) where T
     out = ContiguousVector{T}()
-    if Base.IteratorSize(collection) isa Base.SizeUnknown
-        # We don't know how many elements there are, so we just push them on
-        for x in collection
-            push!(out.v, x)
-        end
-        return out
-    else
-        resize!(out.v, length(collection))
-        for (i,x) in enumerate(collection)
-            @inbounds out[i] = x
-        end
-        return out
-    end
+    return @inline append!(out, collection)
 end
 
 end  # module ContiguousVectors
